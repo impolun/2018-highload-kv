@@ -11,8 +11,12 @@ repositories {
 }
 
 dependencies {
+    compile("org.junit.platform:junit-platform-launcher:1.3.1")
     // Our beloved one-nio
     compile("ru.odnoklassniki:one-nio:1.0.2")
+
+    //DB
+    compile("org.mapdb:mapdb:3.0.5")
 
     // Annotations for better code documentation
     compile("com.intellij:annotations:12.0")
@@ -23,6 +27,8 @@ dependencies {
 
     // Guava for tests
     testCompile("com.google.guava:guava:23.1-jre")
+
+    compile("javax.xml.bind:jaxb-api:2.3.1")
 }
 
 tasks {
