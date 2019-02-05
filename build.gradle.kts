@@ -28,6 +28,8 @@ dependencies {
     // Guava for tests
     testCompile("com.google.guava:guava:23.1-jre")
 
+    compile("log4j:log4j:1.2.17")
+
     compile("javax.xml.bind:jaxb-api:2.3.1")
 }
 

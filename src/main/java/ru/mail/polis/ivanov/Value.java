@@ -4,21 +4,32 @@ import java.io.Serializable;
 import java.util.Arrays;
 
 public class Value implements Serializable {
+    private final byte[] data;
+    private final long timestamp;
+    private final State state;
 
-    private byte[] data;
-    private long timestamp;
-    private State state;
-
-    enum State{
+    enum State {
         PRESENT,
         DELETED,
         UNKNOWN
+    }
+
+    public Value(byte[] data) {
+        this.data = data;
+        this.timestamp = System.currentTimeMillis();
+        this.state = State.PRESENT;
     }
 
     public Value(byte[] data, long timestamp, int state) {
         this.data = data;
         this.timestamp = timestamp;
         this.state = State.values()[state];
+    }
+
+    public Value(byte[] data, long timestamp, State state) {
+        this.data = data;
+        this.timestamp = timestamp;
+        this.state = state;
     }
 
     public Value(byte[] data, long timestamp) {
@@ -31,24 +42,12 @@ public class Value implements Serializable {
         return state;
     }
 
-    public void setState(State state) {
-        this.state = state;
-    }
-
     public byte[] getData() {
         return data;
     }
 
-    public void setData(byte[] data) {
-        this.data = data;
-    }
-
     public long getTimestamp() {
         return timestamp;
-    }
-
-    public void setTimestamp(long timestamp) {
-        this.timestamp = timestamp;
     }
 
     @Override
