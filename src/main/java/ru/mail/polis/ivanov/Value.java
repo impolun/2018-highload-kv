@@ -8,12 +8,6 @@ public class Value implements Serializable {
     private final long timestamp;
     private final State state;
 
-    enum State {
-        PRESENT,
-        DELETED,
-        UNKNOWN
-    }
-
     public Value(byte[] data) {
         this.data = data;
         this.timestamp = System.currentTimeMillis();
@@ -57,5 +51,11 @@ public class Value implements Serializable {
                 ", timestamp=" + timestamp +
                 ", state=" + state +
                 '}';
+    }
+
+    public enum State {
+        PRESENT,
+        DELETED,
+        UNKNOWN
     }
 }

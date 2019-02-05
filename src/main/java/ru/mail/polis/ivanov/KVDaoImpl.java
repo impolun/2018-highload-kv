@@ -19,7 +19,7 @@ public class KVDaoImpl implements KVDao {
     private final HTreeMap<byte[], byte[]> storage;
 
     public KVDaoImpl(File directory) {
-        this.data = new File(directory,"db");
+        this.data = new File(directory, "db");
         this.db = DBMaker
                 .fileDB(data)
                 .fileMmapEnableIfSupported()
@@ -41,16 +41,16 @@ public class KVDaoImpl implements KVDao {
 
     @Override
     public void upsert(@NotNull byte[] key, @NotNull byte[] value) throws IOException {
-        this.storage.put(key,value);
+        this.storage.put(key, value);
     }
 
     @Override
-    public void remove(@NotNull byte[] key) throws IOException{
+    public void remove(@NotNull byte[] key) throws IOException {
         this.storage.remove(key);
     }
 
     @Override
-    public void close() throws IOException{
+    public void close() throws IOException {
         db.close();
     }
 }

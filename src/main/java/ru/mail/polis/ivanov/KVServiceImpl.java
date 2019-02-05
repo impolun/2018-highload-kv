@@ -2,26 +2,30 @@ package ru.mail.polis.ivanov;
 
 import one.nio.http.*;
 import one.nio.net.ConnectionString;
+import org.apache.log4j.Logger;
 import org.jetbrains.annotations.NotNull;
 import ru.mail.polis.KVDao;
 import ru.mail.polis.KVService;
-import org.apache.log4j.Logger;
+import ru.mail.polis.ivanov.handler.HandlerDelete;
+import ru.mail.polis.ivanov.handler.HandlerGet;
+import ru.mail.polis.ivanov.handler.HandlerPut;
 
 import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import static java.lang.Math.abs;
-
 public class KVServiceImpl extends HttpServer implements KVService {
+    public static final int INTERNAL_ERROR = 500;
     @NotNull
     private final KVDao kvDao;
-    private String[] topology;
-    private String me;
     private final String DEFAULT_REPLICAS;
     private final Map<String, HttpClient> nodes;
     private final Logger logger = Logger.getLogger(KVServiceImpl.class);
-    private final int INTERNAL_ERROR = 500;
+    private final HandlerDelete handlerDelete;
+    private final HandlerGet handlerGet;
+    private final HandlerPut handlerPut;
+    private String[] topology;
+    private String me;
 
     public KVServiceImpl(@NotNull HttpServerConfig config, @NotNull KVDao kvDao, @NotNull Set<String> topology) throws IOException {
         super(config);
@@ -33,6 +37,11 @@ public class KVServiceImpl extends HttpServer implements KVService {
                 o -> o,
                 o -> new HttpClient(new ConnectionString(o))));
         DEFAULT_REPLICAS = (nodes.size() / 2 + 1) + "/" + nodes.size();
+
+        handlerDelete = new HandlerDelete(kvDao, me, nodes);
+        handlerGet = new HandlerGet(kvDao, me, nodes);
+        handlerPut = new HandlerPut(kvDao, me, nodes);
+
     }
 
     @Override
@@ -73,9 +82,9 @@ public class KVServiceImpl extends HttpServer implements KVService {
                 case Request.METHOD_GET:
                     logger.info("METHOD_GET");
                     if (isProxied) {
-                        session.sendResponse(get(id));
+                        session.sendResponse(handlerGet.get(id));
                     } else {
-                        session.sendResponse(proxiedGET(
+                        session.sendResponse(handlerGet.proxiedGET(
                                 id,
                                 replicasDef.getAck(),
                                 getNodes(id, replicasDef.getFrom())
@@ -87,9 +96,9 @@ public class KVServiceImpl extends HttpServer implements KVService {
                 case Request.METHOD_PUT:
                     logger.info("METHOD_PUT");
                     if (isProxied) {
-                        session.sendResponse(put(id, request.getBody()));
+                        session.sendResponse(handlerPut.put(id, request.getBody()));
                     } else {
-                        session.sendResponse(proxiedPUT(
+                        session.sendResponse(handlerPut.proxiedPUT(
                                 id,
                                 request.getBody(),
                                 replicasDef.getAck(),
@@ -102,9 +111,9 @@ public class KVServiceImpl extends HttpServer implements KVService {
                 case Request.METHOD_DELETE:
                     logger.info("METHOD_DELETE");
                     if (isProxied) {
-                        session.sendResponse(delete(id));
+                        session.sendResponse(handlerDelete.delete(id));
                     } else {
-                        session.sendResponse(proxiedDELETE(id, replicasDef.getAck(), getNodes(id, replicasDef.getFrom())));
+                        session.sendResponse(handlerDelete.proxiedDELETE(id, replicasDef.getAck(), getNodes(id, replicasDef.getFrom())));
                     }
                     break;
 
@@ -124,45 +133,6 @@ public class KVServiceImpl extends HttpServer implements KVService {
         }
     }
 
-    private Response delete(String id) {
-        try {
-            Value val = new Value(new byte[0], System.currentTimeMillis(), Value.State.DELETED);
-            kvDao.upsert(id.getBytes(), ValueSerializer.INSTANCE.serialize(val));
-            logger.info("DELETE id=" + id);
-        } catch (IOException ex) {
-            logger.info(ex);
-            return new Response(Response.INTERNAL_ERROR, Response.EMPTY);
-        }
-        return new Response(Response.ACCEPTED, Response.EMPTY);
-    }
-
-    private Response put(String id, byte[] body) {
-        try {
-            kvDao.upsert(id.getBytes(), ValueSerializer.INSTANCE.serialize(new Value(body)));
-            logger.info("PUT id=" + id);
-        } catch (IOException ex) {
-            logger.info(ex);
-        }
-        return new Response(Response.CREATED, Response.EMPTY);
-    }
-
-    private Response get(String id) {
-        Response response = null;
-        try {
-            logger.info("GET id=" + id);
-            Value value = ValueSerializer.INSTANCE.deserialize(kvDao.get(id.getBytes()));
-            response = new Response(Response.OK, value.getData());
-            response.addHeader("Timestamp" + value.getTimestamp());
-            response.addHeader("State" + value.getState().ordinal());
-        } catch (NoSuchElementException ex) {
-            response = new Response(Response.NOT_FOUND, Response.EMPTY);
-            response.addHeader("Timestamp" + 0L);
-            response.addHeader("State" + Value.State.UNKNOWN.ordinal());
-        } catch (IOException ex) {
-            logger.info(ex);
-        }
-        return response;
-    }
 
     private List<String> getNodes(String key, int length) {
         List<String> clients = new ArrayList<>();
@@ -173,112 +143,4 @@ public class KVServiceImpl extends HttpServer implements KVService {
         return clients;
     }
 
-    private Response proxiedGET(String id, int ack, List<String> from) {
-        final List<Value> values = new ArrayList<>();
-        for (String node : from) {
-            if (node.equals(me)) {
-                try {
-                    values.add(ValueSerializer.INSTANCE.deserialize(kvDao.get(id.getBytes())));
-                } catch (NoSuchElementException ex) {
-                    logger.info(ex);
-                    values.add(new Value(new byte[0], Long.MIN_VALUE, Value.State.UNKNOWN));
-                } catch (IOException ex) {
-                    logger.info(ex);
-                }
-            } else {
-                try {
-                    final Response response = nodes.get(node).get("/v0/entity?id=" + id, "proxied: true");
-                    switch (response.getStatus()){
-                        case 200:
-                            values.add(proxGetNewValue(response));
-                            logger.info("proxiedGET ok" + ":" + response.getStatus());
-                            break;
-                        case 404:
-                            values.add(proxGetNewValue(response));
-                            logger.info("proxiedGET not found" + ":" + response.getStatus());
-                            break;
-                        case 500:
-                            logger.info("proxiedGET bad answer" + ":" + response.getStatus());
-                            break;
-                        default:
-                            logger.info("proxiedGET def" + ":" + response.getStatus());
-                    }
-                } catch (Exception ex) {
-                    logger.info(ex);
-                }
-            }
-        }
-        if (values.size() >= ack) {
-            Value max = values.stream()
-                    .max(Comparator.comparingLong(Value::getTimestamp)).get();
-            logger.info(max.getState());
-            return max.getState() == Value.State.PRESENT ?
-                    new Response(Response.OK, max.getData()) :
-                    new Response(Response.NOT_FOUND, Response.EMPTY);
-        }
-        return new Response(Response.GATEWAY_TIMEOUT, Response.EMPTY);
-    }
-
-    private Value proxGetNewValue(Response response) {
-        return new Value(response.getBody(),
-                Long.parseLong(response.getHeader("Timestamp")),
-                Integer.parseInt(response.getHeader("State")));
-    }
-
-    private Response proxiedPUT(String id, byte[] body, int ack, List<String> from) {
-        int myAck = 0;
-        for (String node : from) {
-            if (node.equals(me)) {
-                try {
-                    kvDao.upsert(id.getBytes(), ValueSerializer.INSTANCE.serialize(new Value(body, System.currentTimeMillis())));
-                    myAck++;
-                } catch (IOException ex) {
-                    logger.info(ex);
-                }
-            } else {
-                try {
-                    final Response response = nodes.get(node).put("/v0/entity?id=" + id, body, "proxied: true");
-                    if (response.getStatus() != INTERNAL_ERROR) {
-                        myAck++;
-                    }
-                } catch (Exception ex) {
-                    logger.info(ex);
-                }
-            }
-        }
-        if (myAck >= ack) {
-            return new Response(Response.CREATED, Response.EMPTY);
-        } else {
-            return new Response(Response.GATEWAY_TIMEOUT, Response.EMPTY);
-        }
-    }
-
-    private Response proxiedDELETE(String id, int ack, List<String> from) {
-        int myAck = 0;
-        for (String node : from) {
-            if (node.equals(me)) {
-                Value val = new Value(new byte[0], System.currentTimeMillis(), Value.State.DELETED);
-                try {
-                    byte[] ser = ValueSerializer.INSTANCE.serialize(val);
-                    kvDao.upsert(id.getBytes(), ser);
-                    myAck++;
-                } catch (IOException ex) {
-                    logger.info(ex);
-                }
-            } else {
-                try {
-                    final Response response = nodes.get(node).delete("/v0/entity?id=" + id, "proxied: true");
-                    if (response.getStatus() != INTERNAL_ERROR) {
-                        myAck++;
-                    }
-                } catch (Exception ex) {
-                    logger.info(ex);
-                }
-            }
-        }
-        if (myAck >= ack) {
-            return new Response(Response.ACCEPTED, Response.EMPTY);
-        }
-        return new Response(Response.GATEWAY_TIMEOUT, Response.EMPTY);
-    }
 }
